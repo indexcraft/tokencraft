@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TokenCraft — by IndexCraft</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"
+  onerror="this.onerror=null;var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js';document.head.appendChild(s);"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+  onerror="this.onerror=null;var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';document.head.appendChild(s);"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-title">TokenCraft</span>
+      <span class="brand-sub">by IndexCraft</span>
+    </div>
+    <p class="tagline">Converts files to Markdown and tells you honestly whether it actually saved tokens</p>
+  </div>
+  <span class="version-badge">v{{ app_version }} · {{ "Local" if local_mode else "Hosted" }}</span>
+</header>
+
+<main class="layout">
+  <section class="panel operations-panel">
+    <h2><span class="panel-icon">⚙</span> Operations Panel</h2>
+
+    <label class="field-label">Select files</label>
+    <div id="dropzone" tabindex="0">
+      <div class="dz-icon">⬆</div>
+      <div class="dz-text">Click to upload, or drag files here</div>
+      <div id="fileCount" class="dz-count">No files selected</div>
+      <input type="file" id="fileInput" multiple hidden>
+    </div>
+
+    <label class="toggle-row">
+      <input type="checkbox" id="fastModeToggle">
+      <span>⚡ Fast mode (PDFs only)</span>
+      <button type="button" class="info-btn" data-info="fastModeInfo" aria-label="More info">?</button>
+    </label>
+
+    <label class="toggle-row">
+      <input type="checkbox" id="ocrToggle">
+      <span>Use AI vision for scanned pages &amp; images</span>
+      <button type="button" class="info-btn" data-info="audioInfo" aria-label="More info">?</button>
+    </label>
+    <div id="apiKeyRow" class="field-row" hidden>
+      <label class="field-label">OpenAI API key</label>
+      <input type="password" id="apiKeyInput" placeholder="sk-..." class="text-input">
+    </div>
+
+    <!-- Popover content, hidden by default; shown near the '?' that was clicked -->
+    <template id="fastModeInfo">
+      <strong>~20x faster PDF conversion</strong> — but tables lose their structure (plain text
+      in reading order instead of Markdown tables).<br><br>
+      <strong>Use it for:</strong> text-heavy PDFs with few/no tables (contracts, articles, letters),
+      or large batches where speed matters most.<br><br>
+      <strong>Skip it for:</strong> table/dashboard-heavy PDFs (SEO exports, financial reports) where
+      a number's meaning depends on its row/column.<br><br>
+      Only affects <code>.pdf</code> files — Word, Excel, PowerPoint, images, and audio are unchanged.
+    </template>
+    <template id="audioInfo">
+      Audio (<code>.mp3</code>/<code>.wav</code>) and video-with-audio (<code>.mp4</code>) are transcribed
+      via a live network call to Google's speech API — not local, and not affected by Fast mode.<br><br>
+      On a slow/restricted network this can be slow; any single file taking longer than 90 seconds is
+      skipped automatically so it doesn't hold up the rest of your batch.
+    </template>
+
+    {% if local_mode %}
+    <label class="field-label">Output folder destination</label>
+    <div class="field-row">
+      <input type="text" id="outputFolder" class="text-input" value="{{ default_output_folder }}">
+      <button id="browseBtn" class="btn btn-ghost">Browse…</button>
+    </div>
+    {% endif %}
+
+    <button id="convertBtn" class="btn btn-primary btn-block">⚡ Optimize &amp; Convert Files</button>
+    <div id="progressWrap" class="progress-wrap" hidden>
+      <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+    </div>
+    <div id="convertStatus" class="status-line"></div>
+  </section>
+
+  <section class="main-col">
+    <div class="stat-cards">
+      <div class="stat-card stat-native">
+        <div class="stat-label">NATIVE UPLOAD (COMPARABLE FILES)</div>
+        <div class="stat-value" id="statNative">—</div>
+      </div>
+      <div class="stat-card stat-converted">
+        <div class="stat-label">CONVERTED (MARKDOWN)</div>
+        <div class="stat-value" id="statConverted">—</div>
+      </div>
+      <div class="stat-card stat-ratio">
+        <div class="stat-label">TOKENS SAVED</div>
+        <div class="stat-value" id="statRatio">—</div>
+      </div>
+    </div>
+    <p id="comparableNote" class="muted-note" hidden></p>
+
+    <div class="panel chart-panel">
+      <h3>Token Comparison</h3>
+      <canvas id="tokenChart" height="90"></canvas>
+      <div id="chartEmptyNote" class="muted-note" hidden>Nothing to chart yet — convert some files first.</div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head-row">
+        <h3>Processing Report</h3>
+        <div class="bulk-actions">
+          <button id="downloadAllBtn" class="btn btn-ghost" disabled>Download all (.zip)</button>
+          {% if local_mode %}
+          <button id="saveToFolderBtn" class="btn btn-ghost" disabled>Save to folder</button>
+          <button id="openFolderBtn" class="btn btn-dark">📂 Open Output Folder</button>
+          {% endif %}
+        </div>
+      </div>
+      <table class="results-table">
+        <thead>
+          <tr>
+            <th>File Name</th>
+            <th>Format</th>
+            <th>Native</th>
+            <th>Converted</th>
+            <th>Savings</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="resultsBody">
+          <tr class="empty-row"><td colspan="7">No files converted yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  TokenCraft · IndexCraft ·
+  {% if local_mode %}Running locally — your files never leave this computer.
+  {% else %}Hosted mode — files are processed in memory for this request and are not stored.{% endif %}
+</footer>
+
+<script>
+  window.__TOKENCRAFT_LOCAL_MODE__ = {{ "true" if local_mode else "false" }};
+</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
